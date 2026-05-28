@@ -36,6 +36,17 @@ branches:
     is-mainline: false
     source-branches: ['main']
 
+  patch:
+    regex: ^patch[/-]
+    mode: ContinuousDeployment
+    increment: Inherit
+    tag: 'patch'
+    track-merge-target: true
+    tracks-release-branches: false
+    is-release-branch: false
+    is-mainline: false
+    source-branches: [ 'release' ]
+
   feature:
     regex: ^features?[/-]
     increment: Inherit
