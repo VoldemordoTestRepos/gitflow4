@@ -29,7 +29,7 @@ branches:
   hotfix:
     regex: ^hotfix[/-]
     increment: Patch
-    tag: ''
+    tag: 'hotfix'
     track-merge-target: true
     tracks-release-branches: false
     is-release-branch: false
