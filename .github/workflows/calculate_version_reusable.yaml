@@ -1,0 +1,73 @@
+on:
+  workflow_call:
+    inputs:
+      GIT_CHECKOUT_TAG:
+        required: false
+        type: string
+        default: "*"
+      GIT_CHECKOUT_DEPTH:
+        required: false
+        type: string
+        default: "0"
+      GIT_CHECKOUT_REF:
+        required: false
+        type: string
+        default: ${{ github.head_ref }}
+      VERSION_USE_CONFIG_FILE:
+        required: false
+        type: boolean
+        default: false
+      VERSION_CONFIG_FILE:
+        required: false
+        type: string
+        default: ".github/version_config_files/version_config.yaml"
+      VERSION_GIT_TAG_PREFIX:
+        description: Optional prefix to the git tag created by versioning, defaults to 'v'
+        required: false
+        type: string
+        default: ""
+    outputs:
+      version:
+        description: "Calculated Version"
+        value: ${{ jobs.calculate-version.outputs.version }}
+    secrets:
+      CI_PAT:
+        required: false
+
+
+jobs:
+  calculate-version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.final.outputs.version }}
+    steps:
+      - name: Checkout Repository (Current)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.GIT_CHECKOUT_DEPTH }}
+          ref: ${{ inputs.GIT_CHECKOUT_REF }}
+          token: ${{ secrets.CI_PAT }}
+
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: "5.12.0"
+
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+        with:
+          useConfigFile: ${{ inputs.VERSION_USE_CONFIG_FILE }}
+          configFilePath: ${{ inputs.VERSION_CONFIG_FILE }}
+
+      - name: Display SemVer -> ${{ steps.gitversion.outputs.semVer }}
+        id: final
+        env:
+          VERSION_GIT_TAG_PREFIX: ${{ inputs.VERSION_GIT_TAG_PREFIX }}
+          GITVERSION_OUTPUT_SEMVER: ${{ steps.gitversion.outputs.semVer }}
+        run: |
+          echo "SemVer: $GITVERSION_OUTPUT_SEMVER"
+          PREFIXED_TAG="${VERSION_GIT_TAG_PREFIX}${GITVERSION_OUTPUT_SEMVER}"
+          echo "PREFIXED_TAG: ${PREFIXED_TAG}"
+          echo "version=${PREFIXED_TAG}" >> $GITHUB_OUTPUT
