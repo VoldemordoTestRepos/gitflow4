@@ -1,0 +1,144 @@
+name: CI-CD
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - 'feature/**'
+      - 'release/**'
+      - 'hotfix/**'
+      - 'patch/**'
+      - develop
+      - main
+    paths-ignore:
+      - 'VERSION'
+
+permissions:
+  contents: write
+
+env:
+  PUBLISH_TO_REGISTRY_PATTERN: publish-to-registry
+  PUBLISH_TO_DEV_PATTERN: publish-to-dev
+
+jobs:
+  calculate-version:
+    uses: ./.github/workflows/calculate_version_reusable.yaml
+    secrets:
+      CI_PAT: ${{ secrets.TEST_CI_PAT }}
+    with:
+      VERSION_USE_CONFIG_FILE: true
+      VERSION_CONFIG_FILE: ".github/version_config_files/version_config.yaml"
+
+  prepare-files:
+    runs-on: ubuntu-22.04
+    needs: [ calculate-version ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - run: |
+          echo ${{ needs.calculate-version.outputs.version }} > VERSION
+          tar -cf - VERSION | gpg --symmetric  --cipher-algo aes256 --batch --yes --passphrase ${{ secrets.ARTIFACTS_PASSPHRASE }} -o content.tar.gz.gpg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared
+          path: content.tar.gz.gpg
+          retention-days: 1
+
+
+  update_version_file:
+    runs-on: ubuntu-22.04
+    needs: [ calculate-version, prepare-files ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TEST_CI_PAT }}
+      - name: Tagging Version
+        uses: actions/github-script@v7.0.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.git.listMatchingRefs({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'tags/${{ needs.calculate-version.outputs.version }}'
+            }).then(result => {
+              console.log(result)
+
+              const exactMatched = result.data.filter((entry) => entry.ref === 'refs/tags/${{ needs.calculate-version.outputs.version }}')
+              if(exactMatched.length == 0) {
+                console.log('Tagging with ${{ needs.calculate-version.outputs.version }}')
+                github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: 'refs/tags/${{ needs.calculate-version.outputs.version }}',
+                  sha: context.sha
+                })
+              }
+            });
+      - name: Release Creation
+        uses: actions/github-script@v7.0.1
+        if: github.ref == 'refs/heads/main'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const tagName = '${{ needs.calculate-version.outputs.version }}';
+            try {
+              const existingRelease = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tagName
+              });
+              
+              core.info(`Release for ${tagName} already exists! Skipping creation.`);
+
+            } catch (error) {
+              if (error.status === 404) {
+                core.info(`Release for ${tagName} not found. Creating a new release...`);
+                
+                try {
+                  const newRelease = await github.rest.repos.createRelease({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    tag_name: tagName,
+                    name: `Release ${tagName}`,
+                    draft: false,
+                    prerelease: false,
+                    generate_release_notes: true
+                  });
+                  
+                  core.info(`Successfully created release: ${newRelease.data.html_url}`);
+                  core.setOutput('release_url', newRelease.data.html_url);
+                  
+                } catch (createError) {
+                  core.setFailed(`Failed to create release: ${createError.message}`);
+                }
+              }
+            }
+      - name: Update Version File
+        if: contains(github.event.head_commit.message, env.PUBLISH_TO_REGISTRY_PATTERN) || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release')
+        run: |
+          echo "${{ needs.calculate-version.outputs.version }}" > VERSION
+          git config --local user.email "edgartest@users.noreply.github.com"
+          git config --local user.name "edgartest[bot]"
+          git commit -m "update version file" -a || echo "No changes to commit"
+          git push
+
+
+  github_release:
+    runs-on: ubuntu-22.04
+    needs: [ calculate-version, update_version_file ]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.calculate-version.outputs.version }}
+          name: Release ${{ needs.calculate-version.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
