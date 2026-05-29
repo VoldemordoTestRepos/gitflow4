@@ -125,20 +125,3 @@ jobs:
           git config --local user.name "edgartest[bot]"
           git commit -m "update version file" -a || echo "No changes to commit"
           git push
-
-
-  github_release:
-    runs-on: ubuntu-22.04
-    needs: [ calculate-version, update_version_file ]
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.calculate-version.outputs.version }}
-          name: Release ${{ needs.calculate-version.outputs.version }}
-          generate_release_notes: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
